@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Skincare Feed</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f7;
+            min-height: 100vh;
+            color: #1d1d1f;
+        }
+
+        .header {
+            text-align: center;
+            padding: 60px 20px 40px;
+            background: white;
+            border-bottom: 1px solid #e5e5e7;
+        }
+
+        .header h1 {
+            font-size: 56px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 12px;
+            color: #1d1d1f;
+        }
+
+        .header p {
+            font-size: 21px;
+            font-weight: 400;
+            color: #6e6e73;
+            line-height: 1.4;
+        }
+
+        .stats-bar {
+            display: none; /* Hide stats bar */
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 48px;
+            font-weight: 600;
+            color: #1d1d1f;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+
+        .stat-label {
+            color: #86868b;
+            font-size: 17px;
+            font-weight: 400;
+        }
+
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 32px 20px;
+            background: #fafafa;
+            border-bottom: 1px solid #e5e5e7;
+        }
+
+        .filter-bar label {
+            font-weight: 600;
+            color: #1d1d1f;
+            font-size: 15px;
+        }
+
+        .filter-bar select {
+            padding: 10px 16px;
+            border: 1px solid #d2d2d7;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: white;
+            font-family: inherit;
+            color: #1d1d1f;
+        }
+
+        .filter-bar select:hover {
+            border-color: #06c;
+        }
+
+        .filter-bar select:focus {
+            border-color: #06c;
+            box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.1);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .feed-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            padding: 40px;
+            background: #f5f5f7;
+        }
+
+        .post-card {
+            background: white;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            cursor: pointer;
+            border: 1px solid #e5e5e7;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .post-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.08);
+        }
+
+        .channel-header {
+            padding: 20px 20px 16px;
+            border-bottom: 1px solid #e5e5e7;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .channel-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .channel-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 600;
+            color: white;
+        }
+
+        .channel-icon.reddit { background: #ff4500; }
+        .channel-icon.instagram { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); }
+        .channel-icon.twitter { background: #000; }
+        .channel-icon.tiktok { background: #000; }
+        .channel-icon.linkedin { background: #0077b5; }
+
+        .channel-name {
+            font-weight: 600;
+            color: #1d1d1f;
+            font-size: 15px;
+        }
+
+        .channel-author {
+            color: #86868b;
+            font-size: 13px;
+            margin-top: 2px;
+        }
+
+        .source-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+
+        .source-badge.reddit { background: #ff4500; color: white; }
+        .source-badge.instagram { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); color: white; }
+        .source-badge.twitter { background: #000; color: white; }
+        .source-badge.tiktok { background: #000; color: white; }
+        .source-badge.linkedin { background: #0077b5; color: white; }
+
+        .post-body {
+            padding: 20px;
+            flex: 1;
+        }
+
+        .post-title {
+            font-size: 19px;
+            font-weight: 600;
+            color: #1d1d1f;
+            line-height: 1.4;
+            margin-bottom: 12px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .post-content {
+            font-size: 15px;
+            color: #6e6e73;
+            line-height: 1.6;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .metrics-bar {
+            display: none; /* Hide metrics bar */
+        }
+
+        .metric {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .metric-icon {
+            font-size: 18px;
+        }
+
+        .metric-value {
+            font-size: 17px;
+            font-weight: 600;
+            color: #1d1d1f;
+        }
+
+        .metric-label {
+            font-size: 11px;
+            color: #86868b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .post-link-bar {
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid #e5e5e7;
+        }
+
+        .post-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #06c;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 15px;
+            transition: opacity 0.2s;
+        }
+
+        .post-link:hover {
+            opacity: 0.7;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 100px 20px;
+            color: #86868b;
+        }
+
+        .empty-state h2 {
+            font-size: 48px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #1d1d1f;
+        }
+
+        @media (max-width: 1200px) {
+            .feed-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .feed-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stats-bar {
+                flex-direction: column;
+                gap: 20px;
+            }
+
+            .header h1 {
+                font-size: 32px;
+            }
+
+            .filter-bar {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔬 AI Skincare Analysis Feed</h1>
+            <p>Trending discussions about AI-powered skin analysis and diagnostics</p>
+            <p style="margin-top: 12px; font-size: 15px; color: #06c; font-weight: 500;">
+                🔥 Filtered: Showing only posts with 100+ engagement
+            </p>
+        </div>
+
+        {% if posts %}
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-number">{{ posts|length }}</div>
+                <div class="stat-label">Hot Posts</div>
+            </div>
+            <div class="stat">
+                {% set total_likes = namespace(value=0) %}
+                {% for post in posts %}
+                    {% set total_likes.value = total_likes.value + (post.score or 0) %}
+                {% endfor %}
+                <div class="stat-number">{{ (total_likes.value / 1000)|round(1) }}K</div>
+                <div class="stat-label">Total Likes</div>
+            </div>
+            <div class="stat">
+                {% set total_comments = namespace(value=0) %}
+                {% for post in posts %}
+                    {% set total_comments.value = total_comments.value + (post.comments or 0) %}
+                {% endfor %}
+                <div class="stat-number">{{ (total_comments.value / 1000)|round(1) }}K</div>
+                <div class="stat-label">Total Comments</div>
+            </div>
+            <div class="stat">
+                {% set total_engagement = namespace(value=0) %}
+                {% for post in posts %}
+                    {% set total_engagement.value = total_engagement.value + (post.engagement or 0) %}
+                {% endfor %}
+                <div class="stat-number">{{ (total_engagement.value / 1000)|round(1) }}K</div>
+                <div class="stat-label">Total Engagement</div>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <label>Filter by:</label>
+            <select id="sourceFilter" onchange="applyFilters()">
+                <option value="all">All Sources</option>
+                <option value="Reddit">Reddit</option>
+                <option value="Instagram">Instagram</option>
+                <option value="Twitter">X (Twitter)</option>
+                <option value="TikTok">TikTok</option>
+            </select>
+            <select id="sortFilter" onchange="applyFilters()">
+                <option value="engagement">Highest Engagement</option>
+                <option value="likes">Most Likes</option>
+                <option value="comments">Most Comments</option>
+                <option value="recent">Most Recent</option>
+            </select>
+        </div>
+
+        <div class="feed-grid" id="feedGrid">
+            {% for post in posts %}
+            <div class="post-card"
+                 data-source="{{ post.source }}"
+                 data-engagement="{{ post.engagement }}"
+                 data-likes="{{ post.score }}"
+                 data-comments="{{ post.comments }}"
+                 data-timestamp="{{ post.created_utc }}">
+
+                <div class="channel-header">
+                    <div class="channel-info">
+                        <div class="channel-icon {{ post.source.split(' - ')[0]|lower }}">
+                            {% if 'Reddit' in post.source %}
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+                                <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/>
+                            </svg>
+                            {% elif post.source == 'Instagram' %}📸
+                            {% elif post.source == 'Twitter' %}𝕏
+                            {% elif post.source == 'TikTok' %}🎵
+                            {% elif post.source == 'LinkedIn' %}💼
+                            {% endif %}
+                        </div>
+                        <div>
+                            <div class="channel-name">{{ post.subreddit or post.source }}</div>
+                            <div class="channel-author">@{{ post.author }}</div>
+                        </div>
+                    </div>
+                    <span class="source-badge {{ post.source|lower }}">{{ post.source }}</span>
+                </div>
+
+                <div class="post-body">
+                    <div class="post-title">{{ post.title }}</div>
+                    {% if post.content %}
+                    <div class="post-content">
+                        {{ post.content[:180] }}{% if post.content|length > 180 %}...{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="metrics-bar">
+                    <div class="metric">
+                        <div class="metric-icon">❤️</div>
+                        {% set likes = post.score or 0 %}
+                        <div class="metric-value">{{ (likes / 1000)|round(1) if likes >= 1000 else likes }}{{ 'K' if likes >= 1000 else '' }}</div>
+                        <div class="metric-label">Likes</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-icon">💬</div>
+                        {% set comments = post.comments or 0 %}
+                        <div class="metric-value">{{ (comments / 1000)|round(1) if comments >= 1000 else comments }}{{ 'K' if comments >= 1000 else '' }}</div>
+                        <div class="metric-label">Comments</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-icon">👁️</div>
+                        {% set engagement = post.engagement or 0 %}
+                        <div class="metric-value">{{ ((engagement * 10) / 1000)|round(1) if engagement >= 100 else (engagement * 10) }}{{ 'K' if engagement >= 100 else '' }}</div>
+                        <div class="metric-label">Views</div>
+                    </div>
+                </div>
+
+                <div class="post-link-bar">
+                    <a href="{{ post.url }}" class="post-link" target="_blank">
+                        View Post →
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h2>No posts found</h2>
+            <p>Check back later for AI skincare analysis content</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        function applyFilters() {
+            const sourceFilter = document.getElementById('sourceFilter');
+            const sortFilter = document.getElementById('sortFilter');
+            const feedGrid = document.getElementById('feedGrid');
+            const cards = Array.from(feedGrid.querySelectorAll('.post-card'));
+
+            // Filter by source
+            const selectedSource = sourceFilter.value;
+            cards.forEach(card => {
+                const cardSource = card.dataset.source;
+                // Use startsWith for Reddit to match "Reddit - r/..." sources
+                const matchesFilter = selectedSource === 'all' ||
+                                     cardSource === selectedSource ||
+                                     (selectedSource === 'Reddit' && cardSource.startsWith('Reddit'));
+
+                if (matchesFilter) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+
+            // Get visible cards for sorting
+            const visibleCards = cards.filter(card => card.style.display !== 'none');
+
+            // Sort visible cards
+            const sortBy = sortFilter.value;
+            visibleCards.sort((a, b) => {
+                if (sortBy === 'engagement') {
+                    return parseInt(b.dataset.engagement) - parseInt(a.dataset.engagement);
+                } else if (sortBy === 'likes') {
+                    return parseInt(b.dataset.likes) - parseInt(a.dataset.likes);
+                } else if (sortBy === 'comments') {
+                    return parseInt(b.dataset.comments) - parseInt(a.dataset.comments);
+                } else if (sortBy === 'recent') {
+                    return new Date(b.dataset.timestamp) - new Date(a.dataset.timestamp);
+                }
+                return 0;
+            });
+
+            // Reorder cards in DOM
+            visibleCards.forEach(card => feedGrid.appendChild(card));
+        }
+
+        // Apply filters on page load
+        document.addEventListener('DOMContentLoaded', applyFilters);
+    </script>
+</body>
+</html>

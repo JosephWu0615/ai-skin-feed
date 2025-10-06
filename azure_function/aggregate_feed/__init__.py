@@ -30,7 +30,7 @@ def _get_blob_service_client():
     return BlobServiceClient.from_connection_string(conn_str)
 
 
-def _ensure_container(client: BlobServiceClient, container_name: str) -> None:
+def _ensure_container(client: Any, container_name: str) -> None:
     try:
         client.create_container(container_name)
     except Exception:

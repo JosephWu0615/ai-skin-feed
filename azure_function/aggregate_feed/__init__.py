@@ -6,7 +6,6 @@ import traceback
 from typing import Any, Dict, List
 
 import azure.functions as func
-from azure.storage.blob import BlobServiceClient
 
 # Ensure repo root is on sys.path to import aggregator.py
 import sys
@@ -18,11 +17,16 @@ if REPO_ROOT not in sys.path:
 from aggregator import UnifiedFeedAggregator
 
 
-def _get_blob_service_client() -> BlobServiceClient:
+def _get_blob_service_client():
     # Prefer Azure Functions default storage connection
     conn_str = os.getenv("AzureWebJobsStorage") or os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not conn_str:
         raise RuntimeError("Storage connection string not found. Set AzureWebJobsStorage.")
+    try:
+        from azure.storage.blob import BlobServiceClient  # defer import for better error surfacing
+    except ModuleNotFoundError as e:
+        logging.error("Missing dependency azure-storage-blob. Ensure it is deployed under .python_packages.")
+        raise
     return BlobServiceClient.from_connection_string(conn_str)
 
 

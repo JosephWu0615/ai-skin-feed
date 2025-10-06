@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
 Unified AI Skincare Feed Aggregator
-Combines posts from Reddit, X (Twitter), and Instagram
+Web app renders feed; daily aggregation is done by Azure Function.
 """
 
 import json
 import os
 from datetime import datetime
-from flask import Flask, render_template, jsonify
-from typing import List, Dict
-import schedule
-import time
-import threading
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from flask import Flask, render_template, jsonify, request
+from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+from aggregator import UnifiedFeedAggregator
 
 # Configuration
-MIN_ENGAGEMENT = 100
+load_dotenv()
+
+# Email config remains for the optional test-email route
 RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL', 'your-email@gmail.com')
 EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS', 'sender@gmail.com')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD', 'your-app-password')
@@ -35,282 +35,92 @@ def format_number(value):
     except (ValueError, TypeError):
         return value
 
-class UnifiedFeedAggregator:
-    def __init__(self):
-        self.all_posts = []
+def _get_blob_service_client() -> Optional[BlobServiceClient]:
+    """Create a BlobServiceClient via connection string or managed identity.
 
-    def fetch_reddit_posts_via_mcp(self) -> List[Dict]:
-        """Fetch Reddit posts using your Reddit AI agent via MCP"""
-        reddit_posts = []
-
-        # AI Skincare related subreddits
-        subreddits = [
-            'SkincareAddiction',
-            'AsianBeauty',
-            'SkincareAddicts',
-            '30PlusSkinCare'
-        ]
-
-        # AI skincare keywords for filtering
-        ai_keywords = ['ai', 'artificial intelligence', 'skin analysis', 'app', 'technology',
-                       'scanner', 'diagnostic', 'personalized', 'algorithm', 'smart mirror',
-                       'virtual', 'digital', 'automated', 'machine learning']
-
-        for subreddit in subreddits:
-            try:
-                # Use MCP Reddit tool to fetch hot threads
-                # Note: This would be called via Claude's MCP integration
-                # For now, we'll use a placeholder that can be replaced with actual MCP calls
-                print(f"📡 Fetching r/{subreddit} via Reddit MCP agent...")
-
-                # Placeholder: In production, this would use:
-                # response = mcp__reddit__fetch_reddit_hot_threads(subreddit=subreddit, limit=50)
-                # Then parse and filter the response
-
-            except Exception as e:
-                print(f"⚠️ Error fetching r/{subreddit}: {e}")
-
-        return reddit_posts
-
-    def fetch_twitter_posts(self) -> List[Dict]:
-        """Fetch Twitter/X posts about AI skincare via Apify (HARD LIMIT: <20 posts)"""
-
-        # Try to load from Apify scrape results first
+    Returns None if no configuration found.
+    """
+    conn_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+    if conn_str:
         try:
-            with open('twitter_apify_posts.json', 'r', encoding='utf-8') as f:
-                apify_posts = json.load(f)
-                if apify_posts:
-                    print(f"✓ Loaded {len(apify_posts)} Twitter/X posts from Apify scrape")
-                    return apify_posts[:5]  # Limit to 5
-        except FileNotFoundError:
-            print("ℹ️  No Apify Twitter/X posts found, using fallback data")
+            return BlobServiceClient.from_connection_string(conn_str)
+        except Exception:
+            pass
 
-        # No fallback - all Twitter posts come from social_feed_combined.json
+    account_url = os.getenv('BLOB_ACCOUNT_URL')  # e.g., https://<account>.blob.core.windows.net
+    if account_url:
+        try:
+            cred = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+            return BlobServiceClient(account_url=account_url, credential=cred)
+        except Exception:
+            pass
+    return None
+
+
+def _read_latest_posts_from_blob() -> Optional[List[Dict[str, Any]]]:
+    client = _get_blob_service_client()
+    if not client:
+        return None
+
+def _read_posts_for_date(date_str: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """Read posts for a specific date (YYYY-MM-DD.json) from Blob. If date_str is None, read latest."""
+    if date_str is None:
+        return _read_latest_posts_from_blob()
+    client = _get_blob_service_client()
+    if not client:
+        return None
+    container_name = os.getenv('FEED_CONTAINER', 'feeds')
+    blob_name = f"{date_str}.json"
+    try:
+        container_client = client.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
+        data = blob_client.download_blob().readall()
+        return json.loads(data)
+    except Exception as e:
+        print(f"ℹ️ Unable to read blob {container_name}/{blob_name}: {e}")
+        return None
+
+def _list_available_dates_from_blob(max_items: int = 30) -> List[str]:
+    """List available dates from Blob container by enumerating YYYY-MM-DD.json files, sorted desc."""
+    client = _get_blob_service_client()
+    if not client:
+        return []
+    container_name = os.getenv('FEED_CONTAINER', 'feeds')
+    try:
+        container_client = client.get_container_client(container_name)
+        dates: List[str] = []
+        for blob in container_client.list_blobs():
+            name = getattr(blob, 'name', '')
+            if name.endswith('.json') and name != os.getenv('FEED_BLOB_NAME', 'latest.json'):
+                base = name[:-5]  # strip .json
+                # basic validation: expect YYYY-MM-DD
+                if len(base) == 10 and base[4] == '-' and base[7] == '-':
+                    dates.append(base)
+        dates.sort(reverse=True)
+        return dates[:max_items]
+    except Exception as e:
+        print(f"ℹ️ Unable to list blobs in {container_name}: {e}")
         return []
 
-    def fetch_instagram_posts(self) -> List[Dict]:
-        """Fetch Instagram posts about AI skincare via Apify (HARD LIMIT: <20 posts)"""
+def _today_utc_str() -> str:
+    return datetime.utcnow().strftime('%Y-%m-%d')
+    container_name = os.getenv('FEED_CONTAINER', 'feeds')
+    blob_name = os.getenv('FEED_BLOB_NAME', 'latest.json')
+    try:
+        container_client = client.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
+        data = blob_client.download_blob().readall()
+        return json.loads(data)
+    except Exception as e:
+        print(f"ℹ️ Unable to read blob {container_name}/{blob_name}: {e}")
+        return None
 
-        # Try to load from Apify scrape results first
-        try:
-            with open('instagram_apify_posts.json', 'r', encoding='utf-8') as f:
-                apify_posts = json.load(f)
-                if apify_posts:
-                    print(f"✓ Loaded {len(apify_posts)} Instagram posts from Apify scrape")
-                    return apify_posts[:5]  # Limit to 5
-        except FileNotFoundError:
-            print("ℹ️  No Apify Instagram posts found, using fallback data")
+def generate_html_email(posts: List[Dict]) -> str:
+    """Generate beautiful HTML email newsletter"""
+    total_engagement = sum(p.get('engagement', 0) for p in posts)
+    sources = set(p.get('source', 'Unknown') for p in posts)
 
-        # Fallback: Using real, verified Instagram POST links about AI & skincare
-        instagram_posts = [
-            {
-                'title': "How I built a skincare brand from scratch using AI",
-                'author': 'skincare_entrepreneur',
-                'url': 'https://www.instagram.com/p/DIZLouNNu2K/',
-                'score': 8500,
-                'comments': 320,
-                'engagement': 8820,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'Building a skincare brand leveraging AI technology for product development',
-                'created_utc': '2024-11-15T12:00:00'
-            },
-            {
-                'title': "AI skincare technology review and demo",
-                'author': 'beauty_tech_review',
-                'url': 'https://www.instagram.com/p/DMfBUehy5Rf/',
-                'score': 6400,
-                'comments': 185,
-                'engagement': 6585,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'In-depth review of latest AI skincare analysis technology',
-                'created_utc': '2024-12-20T12:00:00'
-            },
-            {
-                'title': "SkinSAFE AI app - Mayo Clinic partnership review",
-                'author': 'dermatology_updates',
-                'url': 'https://apps.apple.com/us/app/skinsafe-ai-skincare-scanner/id920196597',
-                'score': 5200,
-                'comments': 145,
-                'engagement': 5345,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'SkinSAFE app review - AI-powered skincare scanner backed by Mayo Clinic',
-                'created_utc': '2024-10-05T12:00:00'
-            },
-            {
-                'title': "Lovi AI cosmetic scanner - expert skincare guidance",
-                'author': 'ai_beauty_tech',
-                'url': 'https://apps.apple.com/us/app/lovi-ai-cosmetic-scanner-app/id1594167292',
-                'score': 4100,
-                'comments': 98,
-                'engagement': 4198,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'Lovi AI scanner provides personalized skincare advice from medical professionals',
-                'created_utc': '2024-09-22T12:00:00'
-            },
-            {
-                'title': "Amorepacific AI Beauty Counselor app launch",
-                'author': 'k_beauty_tech',
-                'url': 'https://news.microsoft.com/source/asia/features/meet-your-ai-beauty-counselor-k-beauty-giant-amorepacific-builds-an-ai-app-for-personalized-advice/',
-                'score': 3600,
-                'comments': 87,
-                'engagement': 3687,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': "K-beauty giant Amorepacific launches AI app for personalized skincare advice",
-                'created_utc': '2024-09-18T12:00:00'
-            }
-        ]
-        return instagram_posts
-
-    def fetch_linkedin_posts(self) -> List[Dict]:
-        """Fetch LinkedIn posts about AI skincare via Apify (HARD LIMIT: <20 posts)"""
-
-        # Try to load from Apify scrape results first
-        try:
-            with open('linkedin_apify_posts.json', 'r', encoding='utf-8') as f:
-                apify_posts = json.load(f)
-                if apify_posts:
-                    print(f"✓ Loaded {len(apify_posts)} LinkedIn posts from Apify scrape")
-                    return apify_posts[:5]  # Limit to 5
-        except FileNotFoundError:
-            print("ℹ️  No Apify LinkedIn posts found, using fallback data")
-
-        # Fallback: Using curated high-engagement LinkedIn posts
-        linkedin_posts = [
-            {
-                'title': "AI-powered skincare diagnostics: The future of dermatology",
-                'author': 'Dr. Sarah Chen',
-                'url': 'https://www.linkedin.com/posts/ai-skincare-tech',
-                'score': 1200,
-                'comments': 85,
-                'engagement': 1285,
-                'source': 'LinkedIn',
-                'subreddit': 'LinkedIn',
-                'content': 'How AI is revolutionizing skin analysis and personalized treatment recommendations in clinical settings.',
-                'created_utc': '2024-09-25T12:00:00'
-            },
-            {
-                'title': "Launching our AI skin analysis platform - $5M Series A",
-                'author': 'TechVentures',
-                'url': 'https://www.linkedin.com/posts/skintech-ai',
-                'score': 890,
-                'comments': 64,
-                'engagement': 954,
-                'source': 'LinkedIn',
-                'subreddit': 'LinkedIn',
-                'content': 'Proud to announce our Series A funding to bring AI-powered skincare diagnostics to consumers worldwide.',
-                'created_utc': '2024-09-20T12:00:00'
-            },
-            {
-                'title': "AI vs Dermatologists: Study shows 94% accuracy in melanoma detection",
-                'author': 'Medical AI Research',
-                'url': 'https://www.linkedin.com/posts/medical-ai-research',
-                'score': 756,
-                'comments': 123,
-                'engagement': 879,
-                'source': 'LinkedIn',
-                'subreddit': 'LinkedIn',
-                'content': 'New peer-reviewed study demonstrates AI matching dermatologist accuracy in skin cancer screening.',
-                'created_utc': '2024-09-18T12:00:00'
-            },
-            {
-                'title': "Building AI skincare apps: Lessons from 100K users",
-                'author': 'Product Manager Insights',
-                'url': 'https://www.linkedin.com/posts/pm-skincare',
-                'score': 645,
-                'comments': 92,
-                'engagement': 737,
-                'source': 'LinkedIn',
-                'subreddit': 'LinkedIn',
-                'content': 'Key learnings from scaling our AI skincare analysis app to 100,000 active users in 6 months.',
-                'created_utc': '2024-09-15T12:00:00'
-            },
-            {
-                'title': "Ethical AI in beauty tech: Privacy and bias considerations",
-                'author': 'AI Ethics Forum',
-                'url': 'https://www.linkedin.com/posts/ai-ethics-beauty',
-                'score': 534,
-                'comments': 78,
-                'engagement': 612,
-                'source': 'LinkedIn',
-                'subreddit': 'LinkedIn',
-                'content': 'Addressing algorithmic bias and data privacy in AI-powered skincare applications.',
-                'created_utc': '2024-09-12T12:00:00'
-            }
-        ]
-        return linkedin_posts
-
-    def load_posts_from_sources(self) -> List[Dict]:
-        """Load real scraped posts from all platforms"""
-        all_posts = []
-
-        # 1. Load COMBINED FEED (Instagram + Reddit + TikTok + X)
-        print("🚀 Loading REAL scraped social media data...")
-        try:
-            with open('social_feed_combined.json', 'r', encoding='utf-8') as f:
-                combined_posts = json.load(f)
-                print(f"✓ Loaded {len(combined_posts)} posts from combined feed")
-                all_posts = combined_posts
-        except FileNotFoundError:
-            print("⚠️ No combined feed found, loading individual sources...")
-
-            # Fallback: Load Reddit
-            try:
-                with open('reddit_real_data.json', 'r') as f:
-                    reddit_posts = json.load(f)
-                    all_posts.extend(reddit_posts[:10])
-                    print(f"✓ Loaded {len(reddit_posts[:10])} Reddit posts")
-            except FileNotFoundError:
-                print("ℹ️ No Reddit data found")
-
-            # Fallback: Load Instagram
-            try:
-                with open('instagram_feed_data.json', 'r') as f:
-                    instagram_posts = json.load(f)
-                    all_posts.extend(instagram_posts[:10])
-                    print(f"✓ Loaded {len(instagram_posts[:10])} Instagram posts")
-            except FileNotFoundError:
-                print("ℹ️ No Instagram data found")
-
-        # Add high-engagement Twitter/X posts
-        twitter_posts = self.fetch_twitter_posts()
-        all_posts.extend(twitter_posts)
-        print(f"✓ Added {len(twitter_posts)} Twitter/X posts")
-
-        # FILTER: Only posts with score > 100
-        print(f"\n🔍 Filtering posts with score > 100...")
-        print(f"   Before filter: {len(all_posts)} posts")
-        all_posts = [p for p in all_posts if p.get('score', 0) > 100]
-        print(f"   After filter: {len(all_posts)} posts")
-
-        # Sort by engagement
-        all_posts.sort(key=lambda x: x.get('engagement', 0), reverse=True)
-
-        self.all_posts = all_posts
-        print(f"\n📊 Total posts in feed: {len(all_posts)}")
-
-        # Show platform breakdown
-        platforms = {}
-        for post in all_posts:
-            platform = post.get('source', post.get('platform', 'Unknown'))
-            platforms[platform] = platforms.get(platform, 0) + 1
-
-        print("📱 Platform breakdown:")
-        for platform, count in platforms.items():
-            print(f"   - {platform}: {count}")
-
-        return all_posts
-
-    def generate_html_email(self, posts: List[Dict]) -> str:
-        """Generate beautiful HTML email newsletter"""
-        total_engagement = sum(p.get('engagement', 0) for p in posts)
-        sources = set(p.get('source', 'Unknown') for p in posts)
-
-        html = f"""
+    html = f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -466,7 +276,7 @@ class UnifiedFeedAggregator:
     </div>
 """
 
-        html += """
+    html += """
     <div class="footer">
         <p><strong>🔬 AI Skincare Analysis Feed</strong></p>
         <p>Your daily digest of trending AI-driven skincare discussions</p>
@@ -475,94 +285,84 @@ class UnifiedFeedAggregator:
 </body>
 </html>
 """
-        return html
-
-    def send_email_newsletter(self):
-        """Send daily email newsletter"""
-        posts = self.load_posts_from_sources()
-
-        if not posts:
-            print("⚠️ No posts to send in newsletter")
-            return
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"🔬 Your Daily AI Skincare Digest - {datetime.now().strftime('%b %d, %Y')}"
-        msg['From'] = EMAIL_ADDRESS
-        msg['To'] = RECIPIENT_EMAIL
-
-        html_content = self.generate_html_email(posts)
-        html_part = MIMEText(html_content, 'html')
-        msg.attach(html_part)
-
-        try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-                server.send_message(msg)
-            print(f"✅ Newsletter sent to {RECIPIENT_EMAIL}")
-        except Exception as e:
-            print(f"❌ Error sending email: {e}")
+    return html
 
 # Flask routes
 @app.route('/')
 def index():
     """Display unified feed webpage"""
-    aggregator = UnifiedFeedAggregator()
-    posts = aggregator.load_posts_from_sources()
-    return render_template('feed.html', posts=posts)
+    requested_date = request.args.get('date')
+    selected_date = requested_date or _today_utc_str()
+    posts = _read_posts_for_date(selected_date)
+    if posts is None:
+        # Fallback to latest
+        posts = _read_latest_posts_from_blob()
+    if posts is None:
+        # Final fallback: local aggregation
+        aggregator = UnifiedFeedAggregator()
+        posts = aggregator.load_posts_from_sources()
+
+    available_dates = _list_available_dates_from_blob()
+    today_str = _today_utc_str()
+    from datetime import timedelta
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Ensure today's date appears as an option first
+    if today_str not in available_dates:
+        available_dates = [today_str] + available_dates
+
+    return render_template(
+        'feed.html',
+        posts=posts,
+        selected_date=selected_date,
+        available_dates=available_dates,
+        today_str=today_str,
+        yesterday_str=yesterday_str
+    )
 
 @app.route('/api/posts')
 def api_posts():
     """API endpoint for posts"""
-    aggregator = UnifiedFeedAggregator()
-    posts = aggregator.load_posts_from_sources()
+    date_param = request.args.get('date')
+    posts = _read_posts_for_date(date_param)
+    if posts is None:
+        posts = _read_latest_posts_from_blob()
+    if posts is None:
+        aggregator = UnifiedFeedAggregator()
+        posts = aggregator.load_posts_from_sources()
     return jsonify(posts)
 
 @app.route('/send-test-email')
 def send_test_email():
     """Send a test email newsletter"""
     aggregator = UnifiedFeedAggregator()
-    aggregator.send_email_newsletter()
+    posts = aggregator.load_posts_from_sources()
+    html_content = generate_html_email(posts)
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"🔬 Your Daily AI Skincare Digest - {datetime.now().strftime('%b %d, %Y')}"
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = RECIPIENT_EMAIL
+    msg.attach(MIMEText(html_content, 'html'))
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+        print(f"✅ Newsletter sent to {RECIPIENT_EMAIL}")
+    except Exception as e:
+        print(f"❌ Error sending email: {e}")
     return "Test email sent! Check your inbox."
-
-def schedule_daily_scrape_and_email():
-    """Schedule daily scraping at 4:00 AM and email"""
-    aggregator = UnifiedFeedAggregator()
-
-    def scrape_and_send():
-        """Scrape fresh posts and send email"""
-        print("🔄 Starting daily scrape at 4:00 AM...")
-        aggregator.aggregate_posts()  # Refresh posts
-        aggregator.send_email_newsletter()  # Send email
-        print("✅ Daily scrape and email complete")
-
-    # Schedule for 4:00 AM daily
-    schedule.every().day.at("04:00").do(scrape_and_send)
-
-    print("📅 Scheduled daily scraping and email for 4:00 AM")
-
-    # Run scheduler in background
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
 
 if __name__ == '__main__':
     print("🔬 AI Skincare Feed Aggregator - Unified System")
     print("=" * 60)
 
-    # Load initial posts
-    aggregator = UnifiedFeedAggregator()
-    posts = aggregator.load_posts_from_sources()
-    print(f"\n✅ Loaded {len(posts)} high-engagement posts")
-
-    # Start scraping and email scheduler in background thread
-    scheduler_thread = threading.Thread(target=schedule_daily_scrape_and_email, daemon=True)
-    scheduler_thread.start()
-
-    # Start Flask web server
-    print("\n🌐 Starting web server at http://localhost:5001")
-    print("📧 Scraping & email scheduler running (4:00 AM daily)")
-    print("🔗 Visit http://localhost:5001/send-test-email to send a test newsletter")
+    # Note: For local dev only. In Azure App Service use gunicorn.
+    port = int(os.getenv('PORT', '5001'))
+    print(f"\n🌐 Starting web server at http://localhost:{port}")
+    print("🔗 Visit /send-test-email to send a test newsletter")
     print("\nPress Ctrl+C to stop\n")
-
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=port)

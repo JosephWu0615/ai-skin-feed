@@ -349,6 +349,17 @@
         </div>
 
         <div class="filter-bar">
+            <label>Date:</label>
+            <select id="dateFilter" onchange="onDateChange()">
+                {% for d in available_dates %}
+                <option value="{{ d }}" {% if d == selected_date %}selected{% endif %}>
+                    {% if d == today_str %}Today ({{ d }})
+                    {% elif d == yesterday_str %}Yesterday ({{ d }})
+                    {% else %}{{ d }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+
             <label>Filter by:</label>
             <select id="sourceFilter" onchange="applyFilters()">
                 <option value="all">All Sources</option>
@@ -442,6 +453,14 @@
     </div>
 
     <script>
+        function onDateChange() {
+            const dateSel = document.getElementById('dateFilter');
+            const date = dateSel.value;
+            const params = new URLSearchParams(window.location.search);
+            params.set('date', date);
+            window.location.search = params.toString();
+        }
+
         function applyFilters() {
             const sourceFilter = document.getElementById('sourceFilter');
             const sortFilter = document.getElementById('sortFilter');

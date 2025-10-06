@@ -28,7 +28,7 @@ jobs:
 
       - name: Create deployment package
         run: |
-          zip -r webapp_package.zip unified_feed_app.py templates aggregator.py requirements.txt
+          zip -r webapp_package.zip unified_feed_app.py templates aggregator.py requirements.txt social_feed_combined.json
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2

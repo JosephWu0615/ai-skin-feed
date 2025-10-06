@@ -27,6 +27,13 @@ jobs:
       - name: Include shared aggregator in function package
         run: |
           cp -f aggregator.py azure_function/aggregator.py
+          # Include fallback data so first run has content
+          cp -f social_feed_combined.json azure_function/social_feed_combined.json
+
+      - name: Install function dependencies into package (vendored)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r azure_function/requirements.txt -t azure_function/.python_packages/lib/site-packages
 
       - name: Deploy to Azure Function App
         uses: Azure/functions-action@v1

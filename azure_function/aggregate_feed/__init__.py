@@ -2,6 +2,7 @@ import datetime
 import json
 import os
 import logging
+import traceback
 from typing import Any, Dict, List
 
 import azure.functions as func
@@ -34,26 +35,31 @@ def _ensure_container(client: BlobServiceClient, container_name: str) -> None:
 
 def main(mytimer: func.TimerRequest) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
-    logging.info("Timer trigger function executed at %s", utc_timestamp)
+    logging.info("aggregate_feed start %s | site=%s", utc_timestamp, os.getenv('WEBSITE_SITE_NAME', 'unknown'))
+    try:
+        # Aggregate posts
+        aggregator = UnifiedFeedAggregator()
+        posts: List[Dict[str, Any]] = aggregator.load_posts_from_sources()
+        logging.info("aggregate_feed collected %d posts", len(posts))
 
-    # Aggregate posts
-    aggregator = UnifiedFeedAggregator()
-    posts: List[Dict[str, Any]] = aggregator.load_posts_from_sources()
+        # Serialize
+        payload = json.dumps(posts, ensure_ascii=False)
 
-    # Serialize
-    payload = json.dumps(posts, ensure_ascii=False)
+        # Blob targets
+        container_name = os.getenv("FEED_CONTAINER", "feeds")
+        latest_blob_name = os.getenv("FEED_BLOB_NAME", "latest.json")
+        dated_blob_name = f"{datetime.datetime.utcnow().strftime('%Y-%m-%d')}.json"
 
-    # Blob targets
-    container_name = os.getenv("FEED_CONTAINER", "feeds")
-    latest_blob_name = os.getenv("FEED_BLOB_NAME", "latest.json")
-    dated_blob_name = f"{datetime.datetime.utcnow().strftime('%Y-%m-%d')}.json"
+        # Upload
+        bsc = _get_blob_service_client()
+        _ensure_container(bsc, container_name)
+        container = bsc.get_container_client(container_name)
 
-    # Upload
-    bsc = _get_blob_service_client()
-    _ensure_container(bsc, container_name)
-    container = bsc.get_container_client(container_name)
+        container.upload_blob(name=latest_blob_name, data=payload, overwrite=True, content_settings=None)
+        container.upload_blob(name=dated_blob_name, data=payload, overwrite=True, content_settings=None)
 
-    container.upload_blob(name=latest_blob_name, data=payload, overwrite=True, content_settings=None)
-    container.upload_blob(name=dated_blob_name, data=payload, overwrite=True, content_settings=None)
-
-    logging.info("Uploaded feed to blob: %s/%s and %s/%s", container_name, latest_blob_name, container_name, dated_blob_name)
+        logging.info("aggregate_feed uploaded: %s/%s and %s/%s", container_name, latest_blob_name, container_name, dated_blob_name)
+    except Exception as e:
+        logging.error("aggregate_feed failed: %s", e)
+        logging.error(traceback.format_exc())
+        raise

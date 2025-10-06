@@ -24,6 +24,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Include shared aggregator in function package
+        run: |
+          cp -f aggregator.py azure_function/aggregator.py
+
       - name: Deploy to Azure Function App
         uses: Azure/functions-action@v1
         with:

@@ -275,7 +275,7 @@ class UnifiedFeedAggregator:
         .post-link {{ color: #667eea; text-decoration: none; font-weight: 500; }}
         .footer {{ text-align: center; color: #999; padding: 30px; margin-top: 40px; border-top: 2px solid #eee; }}
     </style>
-<head>
+</head>
 <body>
     <div class="header">
         <h1>🔬 AI Skincare Analysis Daily Digest</h1>
@@ -292,13 +292,18 @@ class UnifiedFeedAggregator:
             source = post.get('source', 'Unknown')
             source_class = f"badge-{source.lower()}"
             engagement_class = 'high' if post.get('engagement', 0) > 500 else ''
+            content_html = ''
+            if post.get('content'):
+                content_text = post.get('content', '')[:300]
+                content_html = f'<div class="post-content">{content_text}...</div>'
+
             html += f"""
-    <div class=\"post-card\">
-        <span class=\"source-badge {source_class}\">{source}</span>
-        <div class=\"post-title\">{post.get('title', 'Untitled')}</div>
-        <div class=\"post-meta\"><span class=\"engagement {engagement_class}\">⬆️ {post.get('score', 0)} • 💬 {post.get('comments', 0)} • 🔥 {post.get('engagement', 0)}</span><br>👤 {post.get('author', 'Unknown')}</div>
-        {f"<div class=\\\"post-content\\\">{post.get('content', '')[:300]}...</div>" if post.get('content') else ''}
-        <a href=\"{post.get('url', '#')}\" class=\"post-link\">Read full discussion →</a>
+    <div class="post-card">
+        <span class="source-badge {source_class}">{source}</span>
+        <div class="post-title">{post.get('title', 'Untitled')}</div>
+        <div class="post-meta"><span class="engagement {engagement_class}">⬆️ {post.get('score', 0)} • 💬 {post.get('comments', 0)} • 🔥 {post.get('engagement', 0)}</span><br>👤 {post.get('author', 'Unknown')}</div>
+        {content_html}
+        <a href="{post.get('url', '#')}" class="post-link">Read full discussion →</a>
     </div>
 """
 
@@ -333,4 +338,3 @@ class UnifiedFeedAggregator:
             print(f"✅ Newsletter sent to {RECIPIENT_EMAIL}")
         except Exception as e:
             print(f"❌ Error sending email: {e}")
-

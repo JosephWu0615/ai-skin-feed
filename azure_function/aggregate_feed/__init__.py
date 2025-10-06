@@ -10,11 +10,11 @@ import azure.functions as func
 # Ensure repo root is on sys.path to import aggregator.py
 import sys
 CURRENT_DIR = os.path.dirname(__file__)
-REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..', '..'))
+# The Functions host adds site/wwwroot to sys.path; aggregator.py is deployed at that root.
+# No extra sys.path manipulation is strictly required, but keep for safety if layout differs.
+REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 if REPO_ROOT not in sys.path:
     sys.path.append(REPO_ROOT)
-
-from aggregator import UnifiedFeedAggregator
 
 
 def _get_blob_service_client():
@@ -41,7 +41,8 @@ def main(mytimer: func.TimerRequest) -> None:
     utc_timestamp = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
     logging.info("aggregate_feed start %s | site=%s", utc_timestamp, os.getenv('WEBSITE_SITE_NAME', 'unknown'))
     try:
-        # Aggregate posts
+        # Import aggregator lazily so import errors are captured in logs
+        from aggregator import UnifiedFeedAggregator
         aggregator = UnifiedFeedAggregator()
         posts: List[Dict[str, Any]] = aggregator.load_posts_from_sources()
         logging.info("aggregate_feed collected %d posts", len(posts))

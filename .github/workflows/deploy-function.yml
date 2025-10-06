@@ -30,9 +30,49 @@ jobs:
           # Include fallback data so first run has content
           cp -f social_feed_combined.json azure_function/social_feed_combined.json
 
-      - name: Deploy to Azure Function App
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
-          package: ./azure_function
+      - name: Extract ZipDeploy credentials from publish profile
+        shell: bash
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          from xml.etree import ElementTree as ET
+          xml = os.environ['PUBLISH_PROFILE']
+          root = ET.fromstring(xml)
+          prof = None
+          for p in root.findall('publishProfile'):
+              if p.get('publishMethod') == 'ZipDeploy':
+                  prof = p; break
+          if prof is None:
+              print('::error::ZipDeploy profile not found in publish profile')
+              sys.exit(1)
+          user = prof.get('userName')
+          pwd = prof.get('userPWD')
+          url = prof.get('publishUrl')
+          host = url.split(':')[0]
+          # mask secrets
+          print(f"::add-mask::{user}")
+          print(f"::add-mask::{pwd}")
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"ZIP_USER={user}\n")
+              f.write(f"ZIP_PASS={pwd}\n")
+              f.write(f"SCM_HOST={host}\n")
+          PY
+
+      - name: Create function zip package
+        run: |
+          cd azure_function
+          zip -r ../function_package.zip .
+
+      - name: Deploy via Kudu ZipDeploy (publish profile)
+        env:
+          ZIP_USER: ${{ env.ZIP_USER }}
+          ZIP_PASS: ${{ env.ZIP_PASS }}
+          SCM_HOST: ${{ env.SCM_HOST }}
+        run: |
+          echo "Deploying to https://${SCM_HOST}/api/zipdeploy"
+          curl -sS -u "${ZIP_USER}:${ZIP_PASS}" -X POST \
+            --header "Content-Type: application/zip" \
+            --data-binary @function_package.zip \
+            "https://${SCM_HOST}/api/zipdeploy"

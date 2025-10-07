@@ -5,3 +5,4 @@ requests==2.31.0
 python-dotenv==1.0.0
 azure-storage-blob==12.20.0
 azure-identity==1.17.1
+cryptography==43.0.3

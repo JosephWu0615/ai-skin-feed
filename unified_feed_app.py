@@ -61,6 +61,16 @@ def _read_latest_posts_from_blob() -> Optional[List[Dict[str, Any]]]:
     client = _get_blob_service_client()
     if not client:
         return None
+    container_name = os.getenv('FEED_CONTAINER', 'feeds')
+    blob_name = os.getenv('FEED_BLOB_NAME', 'latest.json')
+    try:
+        container_client = client.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
+        data = blob_client.download_blob().readall()
+        return json.loads(data)
+    except Exception as e:
+        print(f"ℹ️ Unable to read blob {container_name}/{blob_name}: {e}")
+        return None
 
 def _read_posts_for_date(date_str: Optional[str]) -> Optional[List[Dict[str, Any]]]:
     """Read posts for a specific date (YYYY-MM-DD.json) from Blob. If date_str is None, read latest."""
@@ -104,16 +114,6 @@ def _list_available_dates_from_blob(max_items: int = 30) -> List[str]:
 
 def _today_utc_str() -> str:
     return datetime.utcnow().strftime('%Y-%m-%d')
-    container_name = os.getenv('FEED_CONTAINER', 'feeds')
-    blob_name = os.getenv('FEED_BLOB_NAME', 'latest.json')
-    try:
-        container_client = client.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(blob_name)
-        data = blob_client.download_blob().readall()
-        return json.loads(data)
-    except Exception as e:
-        print(f"ℹ️ Unable to read blob {container_name}/{blob_name}: {e}")
-        return None
 
 def generate_html_email(posts: List[Dict]) -> str:
     """Generate beautiful HTML email newsletter"""

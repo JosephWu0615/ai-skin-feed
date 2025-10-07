@@ -255,12 +255,12 @@ def generate_html_email(posts: List[Dict]) -> str:
     </div>
 """
 
-        for post in posts[:15]:
-            source = post.get('source', 'Unknown')
-            source_class = f"badge-{source.lower()}"
-            engagement_class = 'high' if post.get('engagement', 0) > 500 else ''
+    for post in posts[:15]:
+        source = post.get('source', 'Unknown')
+        source_class = f"badge-{source.lower()}"
+        engagement_class = 'high' if post.get('engagement', 0) > 500 else ''
 
-            html += f"""
+        html += f"""
     <div class="post-card">
         <span class="source-badge {source_class}">{source}</span>
         <div class="post-title">{post.get('title', 'Untitled')}</div>

@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from typing import List, Dict
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -30,92 +31,205 @@ class UnifiedFeedAggregator:
                 print(f"⚠️ Error fetching r/{subreddit}: {e}")
         return reddit_posts
 
-    def fetch_twitter_posts(self) -> List[Dict]:
-        """Fetch Twitter/X posts via Apify dump if available; otherwise empty."""
-        try:
-            with open('twitter_apify_posts.json', 'r', encoding='utf-8') as f:
-                apify_posts = json.load(f)
-                if apify_posts:
-                    print(f"✓ Loaded {len(apify_posts)} Twitter/X posts from Apify scrape")
-                    return apify_posts[:5]
-        except FileNotFoundError:
-            print("ℹ️  No Apify Twitter/X posts found, using fallback data")
-        return []
+    # ---- Real source integrations ----
+    def fetch_reddit_posts(self, limit: int = 20) -> List[Dict]:
+        """Fetch Reddit posts from selected subreddits using PRAW.
 
-    def fetch_instagram_posts(self) -> List[Dict]:
-        """Fetch Instagram posts via Apify dump; fallback to curated links."""
+        Supported env vars:
+          - REDDIT_CLIENT_ID (required)
+          - REDDIT_CLIENT_SECRET (required)
+          - REDDIT_USER_AGENT (optional; default constructed if missing)
+          - REDDIT_ACCOUNT (optional; Reddit username)
+          - REDDIT_PASSWORD (optional; Reddit password for script auth)
+        """
+        client_id = os.getenv('REDDIT_CLIENT_ID')
+        client_secret = os.getenv('REDDIT_CLIENT_SECRET')
+        username = os.getenv('REDDIT_ACCOUNT') or os.getenv('REDDIT_USERNAME')
+        password = os.getenv('REDDIT_PASSWORD')
+        user_agent = os.getenv('REDDIT_USER_AGENT')
+        if not user_agent:
+            ua_owner = username or 'ai-skin-feed'
+            user_agent = f"ai-skin-feed/1.0 by {ua_owner}"
+        if not (client_id and client_secret):
+            print("ℹ️ Reddit client credentials not set; skipping Reddit API fetch")
+            return []
         try:
-            with open('instagram_apify_posts.json', 'r', encoding='utf-8') as f:
-                apify_posts = json.load(f)
-                if apify_posts:
-                    print(f"✓ Loaded {len(apify_posts)} Instagram posts from Apify scrape")
-                    return apify_posts[:5]
-        except FileNotFoundError:
-            print("ℹ️  No Apify Instagram posts found, using fallback data")
+            import praw
+        except ImportError:
+            print("ℹ️ PRAW not installed in this environment; skipping Reddit API fetch")
+            return []
 
-        instagram_posts = [
-            {
-                'title': "How I built a skincare brand from scratch using AI",
-                'author': 'skincare_entrepreneur',
-                'url': 'https://www.instagram.com/p/DIZLouNNu2K/',
-                'score': 8500,
-                'comments': 320,
-                'engagement': 8820,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'Building a skincare brand leveraging AI technology for product development',
-                'created_utc': '2024-11-15T12:00:00'
-            },
-            {
-                'title': "AI skincare technology review and demo",
-                'author': 'beauty_tech_review',
-                'url': 'https://www.instagram.com/p/DMfBUehy5Rf/',
-                'score': 6400,
-                'comments': 185,
-                'engagement': 6585,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'In-depth review of latest AI skincare analysis technology',
-                'created_utc': '2024-12-20T12:00:00'
-            },
-            {
-                'title': "SkinSAFE AI app - Mayo Clinic partnership review",
-                'author': 'dermatology_updates',
-                'url': 'https://apps.apple.com/us/app/skinsafe-ai-skincare-scanner/id920196597',
-                'score': 5200,
-                'comments': 145,
-                'engagement': 5345,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'SkinSAFE app review - AI-powered skincare scanner backed by Mayo Clinic',
-                'created_utc': '2024-10-05T12:00:00'
-            },
-            {
-                'title': "Lovi AI cosmetic scanner - expert skincare guidance",
-                'author': 'ai_beauty_tech',
-                'url': 'https://apps.apple.com/us/app/lovi-ai-cosmetic-scanner-app/id1594167292',
-                'score': 4100,
-                'comments': 98,
-                'engagement': 4198,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': 'Lovi AI scanner provides personalized skincare advice from medical professionals',
-                'created_utc': '2024-09-22T12:00:00'
-            },
-            {
-                'title': "Amorepacific AI Beauty Counselor app launch",
-                'author': 'k_beauty_tech',
-                'url': 'https://news.microsoft.com/source/asia/features/meet-your-ai-beauty-counselor-k-beauty-giant-amorepacific-builds-an-ai-app-for-personalized-advice/',
-                'score': 3600,
-                'comments': 87,
-                'engagement': 3687,
-                'source': 'Instagram',
-                'subreddit': 'Instagram',
-                'content': "K-beauty giant Amorepacific launches AI app for personalized skincare advice",
-                'created_utc': '2024-09-18T12:00:00'
-            }
-        ]
-        return instagram_posts
+        subreddits = ['SkincareAddiction', 'AsianBeauty', 'SkincareAddicts', '30PlusSkinCare']
+        keywords = ['ai', 'artificial intelligence', 'skin analysis', 'scanner', 'algorithm', 'personalized']
+
+        # Use script auth if username/password provided; otherwise app-only
+        if username and password:
+            reddit = praw.Reddit(
+                client_id=client_id,
+                client_secret=client_secret,
+                user_agent=user_agent,
+                username=username,
+                password=password,
+            )
+        else:
+            reddit = praw.Reddit(
+                client_id=client_id,
+                client_secret=client_secret,
+                user_agent=user_agent,
+            )
+
+        out: List[Dict] = []
+        for name in subreddits:
+            try:
+                for s in reddit.subreddit(name).hot(limit=limit):
+                    title = s.title or ''
+                    text = getattr(s, 'selftext', '') or ''
+                    hay = f"{title} {text}".lower()
+                    if not any(k in hay for k in keywords):
+                        continue
+                    out.append({
+                        'title': title,
+                        'author': str(s.author) if s.author else 'unknown',
+                        'url': f"https://www.reddit.com{s.permalink}",
+                        'score': int(s.score or 0),
+                        'comments': int(s.num_comments or 0),
+                        'engagement': int((s.score or 0) + (s.num_comments or 0)),
+                        'source': 'Reddit',
+                        'subreddit': f"r/{name}",
+                        'content': text[:500],
+                        'created_utc': datetime.utcfromtimestamp(int(s.created_utc)).isoformat(),
+                    })
+            except Exception as e:
+                print(f"⚠️ Reddit fetch error for r/{name}: {e}")
+        print(f"✓ Fetched {len(out)} Reddit posts via API")
+        return out
+
+    def fetch_twitter_posts(self, max_results: int = 20) -> List[Dict]:
+        """Fetch Twitter/X posts via API v2 recent search using TWITTER_BEARER_TOKEN if provided."""
+        bearer = os.getenv('TWITTER_BEARER_TOKEN')
+        # Fallback: derive bearer token from API key/secret if available
+        if not bearer and os.getenv('TWITTER_API_KEY') and os.getenv('TWITTER_API_KEY_SECRET'):
+            try:
+                import base64
+                key = os.getenv('TWITTER_API_KEY')
+                secret = os.getenv('TWITTER_API_KEY_SECRET')
+                basic = base64.b64encode(f"{key}:{secret}".encode()).decode()
+                tok = requests.post(
+                    'https://api.twitter.com/oauth2/token',
+                    data={'grant_type': 'client_credentials'},
+                    headers={
+                        'Authorization': f'Basic {basic}',
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    },
+                    timeout=15,
+                )
+                tok.raise_for_status()
+                bearer = tok.json().get('access_token')
+            except Exception as e:
+                print(f"ℹ️ Unable to derive bearer token from API key/secret: {e}")
+        if not bearer:
+            print("ℹ️ No TWITTER_BEARER_TOKEN set; skipping Twitter API fetch")
+            return []
+        endpoint = 'https://api.twitter.com/2/tweets/search/recent'
+        query = '(ai OR "artificial intelligence" OR algorithm OR "machine learning") (skin OR skincare OR dermatology) -is:retweet lang:en'
+        params = {
+            'query': query,
+            'max_results': str(min(max_results, 100)),
+            'tweet.fields': 'created_at,public_metrics,author_id',
+            'expansions': 'author_id',
+            'user.fields': 'username,name',
+        }
+        headers = {'Authorization': f'Bearer {bearer}'}
+        try:
+            r = requests.get(endpoint, params=params, headers=headers, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            print(f"⚠️ Twitter API error: {e}")
+            return []
+
+        users = {u['id']: u for u in (data.get('includes', {}).get('users', []) or [])}
+        out: List[Dict] = []
+        for t in data.get('data', []) or []:
+            metrics = t.get('public_metrics', {})
+            likes = int(metrics.get('like_count', 0))
+            replies = int(metrics.get('reply_count', 0))
+            retweets = int(metrics.get('retweet_count', 0))
+            quotes = int(metrics.get('quote_count', 0))
+            author = users.get(t.get('author_id') or '', {})
+            url = f"https://x.com/{author.get('username','')}/status/{t.get('id')}"
+            out.append({
+                'title': (t.get('text') or '')[:120],
+                'author': author.get('username') or 'unknown',
+                'url': url,
+                'score': likes,
+                'comments': replies,
+                'engagement': likes + replies + retweets + quotes,
+                'source': 'Twitter',
+                'subreddit': 'Twitter',
+                'content': t.get('text') or '',
+                'created_utc': t.get('created_at') or '',
+            })
+        print(f"✓ Fetched {len(out)} Twitter/X posts via API")
+        return out
+
+    def fetch_instagram_posts(self, per_hashtag: int = 10) -> List[Dict]:
+        """Fetch Instagram posts using Graph API via hashtag search if credentials provided.
+
+        Env vars required:
+          - IG_ACCESS_TOKEN (long-lived)
+          - IG_BUSINESS_ID (your Instagram Business Account ID)
+
+        Note: Instagram Graph API limitations apply; this queries hashtag recent/top media.
+        """
+        access_token = os.getenv('IG_ACCESS_TOKEN')
+        business_id = os.getenv('IG_BUSINESS_ID')
+        if not (access_token and business_id):
+            print("ℹ️ Instagram Graph credentials not set; skipping Instagram API fetch")
+            return []
+
+        # Allow override via IG_HASHTAGS env (comma-separated)
+        env_tags = os.getenv('IG_HASHTAGS')
+        if env_tags:
+            hashtags = [t.strip().lstrip('#') for t in env_tags.split(',') if t.strip()]
+        else:
+            hashtags = ['skincare', 'skinanalysis', 'aiskincare', 'dermatology', 'skintech']
+        base = 'https://graph.facebook.com/v18.0'
+        out: List[Dict] = []
+        for tag in hashtags:
+            try:
+                hs = requests.get(f"{base}/ig_hashtag_search", params={
+                    'user_id': business_id,
+                    'q': tag,
+                    'access_token': access_token,
+                }, timeout=15).json()
+                if not hs.get('data'):
+                    continue
+                hid = hs['data'][0]['id']
+                media = requests.get(f"{base}/{hid}/recent_media", params={
+                    'user_id': business_id,
+                    'fields': 'caption,media_url,permalink,like_count,comments_count,timestamp,media_type,username',
+                    'access_token': access_token,
+                    'limit': per_hashtag,
+                }, timeout=20).json()
+                for m in media.get('data', []) or []:
+                    caption = m.get('caption') or ''
+                    out.append({
+                        'title': caption[:120] or f"#{tag}",
+                        'author': m.get('username', 'unknown'),
+                        'url': m.get('permalink'),
+                        'score': int(m.get('like_count') or 0),
+                        'comments': int(m.get('comments_count') or 0),
+                        'engagement': int((m.get('like_count') or 0) + (m.get('comments_count') or 0)),
+                        'source': 'Instagram',
+                        'subreddit': 'Instagram',
+                        'content': caption[:500],
+                        'created_utc': m.get('timestamp') or '',
+                    })
+            except Exception as e:
+                print(f"⚠️ Instagram API error for #{tag}: {e}")
+        print(f"✓ Fetched {len(out)} Instagram posts via Graph API")
+        return out
 
     def fetch_linkedin_posts(self) -> List[Dict]:
         """Fetch LinkedIn posts via Apify dump; fallback to curated list."""
@@ -196,34 +310,32 @@ class UnifiedFeedAggregator:
         """Load posts from combined JSON and enrich with other sources; filter + sort."""
         all_posts: List[Dict] = []
 
-        print("🚀 Loading REAL scraped social media data...")
+        print("🚀 Fetching live data from sources where credentials are configured...")
+        # Live source calls (each is optional depending on env vars)
         try:
-            with open('social_feed_combined.json', 'r', encoding='utf-8') as f:
-                combined_posts = json.load(f)
-                print(f"✓ Loaded {len(combined_posts)} posts from combined feed")
-                all_posts = combined_posts
-        except FileNotFoundError:
-            print("⚠️ No combined feed found, loading individual sources...")
+            reddit_posts = self.fetch_reddit_posts(limit=25)
+            all_posts.extend(reddit_posts)
+        except Exception as e:
+            print(f"⚠️ Reddit integration error: {e}")
 
+        try:
+            twitter_posts = self.fetch_twitter_posts(max_results=25)
+            all_posts.extend(twitter_posts)
+        except Exception as e:
+            print(f"⚠️ Twitter integration error: {e}")
+
+        # Instagram disabled by request (enable later if needed)
+
+        # If nothing fetched, fallback to packaged combined JSON
+        if not all_posts:
+            print("ℹ️ No live sources returned posts; using local social_feed_combined.json fallback")
             try:
-                with open('reddit_real_data.json', 'r') as f:
-                    reddit_posts = json.load(f)
-                    all_posts.extend(reddit_posts[:10])
-                    print(f"✓ Loaded {len(reddit_posts[:10])} Reddit posts")
+                with open('social_feed_combined.json', 'r', encoding='utf-8') as f:
+                    combined_posts = json.load(f)
+                    print(f"✓ Loaded {len(combined_posts)} posts from combined feed")
+                    all_posts = combined_posts
             except FileNotFoundError:
-                print("ℹ️ No Reddit data found")
-
-            try:
-                with open('instagram_feed_data.json', 'r') as f:
-                    instagram_posts = json.load(f)
-                    all_posts.extend(instagram_posts[:10])
-                    print(f"✓ Loaded {len(instagram_posts[:10])} Instagram posts")
-            except FileNotFoundError:
-                print("ℹ️ No Instagram data found")
-
-        twitter_posts = self.fetch_twitter_posts()
-        all_posts.extend(twitter_posts)
-        print(f"✓ Added {len(twitter_posts)} Twitter/X posts")
+                print("⚠️ Fallback combined feed not found; returning empty list")
 
         print(f"\n🔍 Filtering posts with score > 100...")
         print(f"   Before filter: {len(all_posts)} posts")

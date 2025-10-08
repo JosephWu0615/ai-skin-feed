@@ -29,6 +29,16 @@ Function App settings
 - Uses `AzureWebJobsStorage` automatically; no extra connection needed.
 - Optional overrides: `FEED_CONTAINER`, `FEED_BLOB_NAME`.
 - Timer schedule is set in `azure_function/aggregate_feed/function.json`: `0 0 4 * * *` (04:00 UTC daily).
+- Live source API credentials (set only on the Function App):
+  - Reddit (PRAW):
+    - `REDDIT_CLIENT_ID`
+    - `REDDIT_CLIENT_SECRET`
+    - Optional: `REDDIT_ACCOUNT` (username), `REDDIT_PASSWORD` (script auth)
+    - Optional: `REDDIT_USER_AGENT` (defaults to `ai-skin-feed/1.0 by <username>`)
+  - Twitter/X API v2:
+    - Prefer: `TWITTER_BEARER_TOKEN`
+    - Fallback: `TWITTER_API_KEY` + `TWITTER_API_KEY_SECRET` (auto-derives bearer)
+  - Notes: Instagram is currently disabled by request. Each source is optional; if none are configured, the function falls back to `social_feed_combined.json` packaged in the app.
 
 Create container
 1) In Storage account, create container `feeds` (private).
@@ -60,4 +70,3 @@ Validation
 Local development
 - Web app: `pip install -r requirements.txt && python unified_feed_app.py` then browse to `http://localhost:5001`.
 - Function: `pip install -r azure_function/requirements.txt` and `func start` inside `azure_function/`.
-
